@@ -22,4 +22,9 @@ describe("user settings", () => {
     expect(defaultSettings.whatsappCardEnabled).toBe(false);
     expect(loadSettings({ getItem: () => "{}" })).toEqual(defaultSettings);
   });
+
+  it("keeps Codex enabled by default and persists an explicit disabled choice", () => {
+    expect(defaultSettings.codexEnabled).toBe(true);
+    expect(loadSettings({ getItem: () => JSON.stringify({ codexEnabled: false }) }).codexEnabled).toBe(false);
+  });
 });

@@ -2,6 +2,10 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -51,23 +55,34 @@ struct LogUpdate {
     started_at: Option<String>,
 }
 
-pub fn start(app: AppHandle) {
+pub fn start(app: AppHandle, codex_enabled: Arc<AtomicBool>) {
     if let Err(error) = thread::Builder::new()
         .name("dot-notifier-codex-logs".into())
-        .spawn(move || watch_sessions(app))
+        .spawn(move || watch_sessions(app, codex_enabled))
     {
         eprintln!("Could not start Codex log adapter: {error}");
     }
 }
 
-fn watch_sessions(app: AppHandle) {
+fn watch_sessions(app: AppHandle, codex_enabled: Arc<AtomicBool>) {
     let Some(sessions_dir) = sessions_directory() else {
         return;
     };
 
     let mut watched = HashMap::<PathBuf, WatchedFile>::new();
+    let mut was_enabled = false;
     thread::sleep(POLL_INTERVAL);
     loop {
+        if !codex_enabled.load(Ordering::Acquire) {
+            watched.clear();
+            was_enabled = false;
+            thread::sleep(POLL_INTERVAL);
+            continue;
+        }
+        if !was_enabled {
+            watched.clear();
+            was_enabled = true;
+        }
         for path in recent_rollouts(&sessions_dir) {
             let metadata = match fs::metadata(&path) {
                 Ok(metadata) => metadata,

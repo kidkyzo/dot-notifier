@@ -705,6 +705,21 @@ button:focus-visible,
   gap: 10px;
 }
 
+.settings-heading-copy { min-width: 0; }
+.settings-heading h4 { margin: 0; font-size: 14px; font-weight: 600; opacity: 0.95; }
+.settings-heading p { margin: 3px 0 0; font-size: 10px; opacity: 0.68; }
+.settings-section-title {
+  margin: 15px 0 -4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--material-outline);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  opacity: 0.68;
+  text-transform: uppercase;
+}
+.settings-hint { margin: 5px 0 0; font-size: 9px; opacity: 0.6; }
+
 .panel-heading button,
 .settings-heading button,
 .settings-done {
@@ -742,6 +757,66 @@ button:focus-visible,
   margin-top: 12px;
   font-size: 11px;
 }
+
+.settings-switch-row {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+  font-size: 11px;
+}
+.settings-switch-row > span:first-child { min-width: 0; opacity: 0.84; }
+.settings-switch-row.is-disabled { opacity: 0.55; }
+.settings-switch-control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 9px;
+}
+.settings-switch-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+.settings-switch-track {
+  display: inline-flex;
+  width: 30px;
+  height: 17px;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--material-outline);
+  border-radius: 999px;
+  background: var(--material-control);
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.settings-switch-track > span {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--material-ink);
+  opacity: 0.72;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+.settings-switch-control input:checked + .settings-switch-track {
+  border-color: color-mix(in srgb, #4c9aff 70%, transparent);
+  background: color-mix(in srgb, #4c9aff 32%, var(--material-control));
+}
+.settings-switch-control input:checked + .settings-switch-track > span {
+  transform: translateX(12px);
+  background: #4c9aff;
+  opacity: 1;
+}
+.settings-switch-control input:focus-visible + .settings-switch-track { outline: 2px solid #4c9aff; outline-offset: 2px; }
+.settings-switch-control input:disabled + .settings-switch-track { opacity: 0.55; }
+.settings-switch-state { min-width: 42px; text-align: right; opacity: 0.72; }
 
 .setting-error {
   margin: 4px 0 0;

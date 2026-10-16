@@ -30,6 +30,7 @@ struct AppState {
     allow_during_fullscreen: std::sync::Arc<AtomicBool>,
     focus_session_active: std::sync::Arc<AtomicBool>,
     system_panel_open: std::sync::Arc<AtomicBool>,
+    codex_enabled: std::sync::Arc<AtomicBool>,
     hit_area: Mutex<Option<HitArea>>,
     tray: Mutex<Option<TrayIcon>>,
     approvals: std::sync::Arc<approvals::ApprovalRegistry>,
@@ -163,6 +164,11 @@ fn get_antigravity_hooks_enabled(app: tauri::AppHandle) -> Result<bool, String> 
 #[tauri::command]
 fn set_antigravity_hooks_enabled(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
     antigravity_hooks::set_enabled(&app, enabled)
+}
+
+#[tauri::command]
+fn set_codex_enabled(state: tauri::State<'_, AppState>, enabled: bool) {
+    state.codex_enabled.store(enabled, Ordering::Release);
 }
 
 fn place_on_work_area(
@@ -818,6 +824,7 @@ pub fn run() {
             dismiss_permission,
             get_antigravity_hooks_enabled,
             set_antigravity_hooks_enabled,
+            set_codex_enabled,
             list_monitors,
             set_placement,
             set_auto_start,
@@ -853,7 +860,10 @@ pub fn run() {
                 app.handle().clone(),
                 app.state::<AppState>().system_panel_open.clone(),
             );
-            codex_logs::start(app.handle().clone());
+            codex_logs::start(
+                app.handle().clone(),
+                app.state::<AppState>().codex_enabled.clone(),
+            );
             antigravity_logs::start(app.handle().clone());
             win_notifications::start(app.handle().clone());
             match app.path().app_local_data_dir() {
@@ -862,6 +872,7 @@ pub fn run() {
                         app.handle().clone(),
                         &directory,
                         app.state::<AppState>().approvals.clone(),
+                        app.state::<AppState>().codex_enabled.clone(),
                     ) {
                         eprintln!("Could not start local event bus: {error}");
                     }

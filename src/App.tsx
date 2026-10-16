@@ -59,6 +59,31 @@ const statusLabels: Record<DemoStatus, string> = {
   needs_input: "Needs permission",
 };
 
+function SettingsSwitch({ label, checked, disabled = false, onChange }: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  return (
+    <div className={`settings-switch-row${disabled ? " is-disabled" : ""}`}>
+      <span>{label}</span>
+      <label className="settings-switch-control">
+        <input
+          aria-label={label}
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          role="switch"
+          type="checkbox"
+        />
+        <span className="settings-switch-track" aria-hidden="true"><span /></span>
+        <span className="settings-switch-state">{checked ? settingsCopy.enabled : settingsCopy.disabled}</span>
+      </label>
+    </div>
+  );
+}
+
 const percent = (value: number | null) => value === null ? systemCopy.unavailable : `${Math.round(value)}%`;
 
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => Array.from(part)[0] ?? "").join("").toUpperCase() || "?";
@@ -159,6 +184,8 @@ function App() {
   const unreadCount = messages.filter((message) => message.unread).length;
   const [messageIndex, setMessageIndex] = useState(0);
   const [peekInfo, setPeekInfo] = useState<PeekInfo>({ source: "Codex", message: "", chatMessages: [] });
+  const peekInfoRef = useRef(peekInfo);
+  peekInfoRef.current = peekInfo;
   const [pulseSource, setPulseSource] = useState<PulseSource | null>(null);
   const [paused, setPaused] = useState(false);
   const [quietMode, setQuietMode] = useState(false);
@@ -263,6 +290,11 @@ function App() {
         arrivingId,
       );
       if (groupedEvents.length === 0) return;
+      if (next.source === "ai" && next.agent === "codex" && !settingsRef.current.codexEnabled) {
+        eventStore.current.dismissPeekGroup(groupedEvents.map((event) => event.id));
+        window.setTimeout(() => showNextQueuedPeek(), 0);
+        return;
+      }
       showEventPeek(groupedEvents[0], groupedEvents);
     }
   };
@@ -306,12 +338,13 @@ function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
-    const running = tasks.filter((task) => task.status === "running").length;
-    const waiting = tasks.filter((task) => task.status === "needs_input").length;
+    const visibleTasks = settings.codexEnabled ? tasks : tasks.filter((task) => task.source !== "codex");
+    const running = visibleTasks.filter((task) => task.status === "running").length;
+    const waiting = visibleTasks.filter((task) => task.status === "needs_input").length;
     void invoke("update_tray_status", { running, waiting }).catch((error: unknown) => {
       console.warn("Could not update tray status", error);
     });
-  }, [tasks]);
+  }, [tasks, settings.codexEnabled]);
 
   useEffect(() => {
     const oldestMessageExpiry = messages.reduce<number | undefined>((next, message) => {
@@ -393,6 +426,19 @@ function App() {
       .then(setAntigravityHooksEnabled)
       .catch((error: unknown) => console.warn("Could not read Antigravity hook status", error));
   }, []);
+
+  useEffect(() => {
+    if (isTauri()) {
+      void invoke("set_codex_enabled", { enabled: settings.codexEnabled })
+        .catch((error: unknown) => console.warn("Could not update Codex integration", error));
+    }
+    if (settings.codexEnabled) return;
+    setTasks((current) => current.filter((task) => task.source !== "codex"));
+    if (peekInfoRef.current.source === "Codex" && (stateRef.current === "alert" || stateRef.current === "peek")) {
+      dispatch({ type: "dismiss" });
+      setPulseSource(null);
+    }
+  }, [settings.codexEnabled]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -542,6 +588,7 @@ function App() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen<AppEvent>("bus-event", ({ payload }) => {
+      if (payload.source === "ai" && payload.agent === "codex" && !settingsRef.current.codexEnabled) return;
       if (payload.source !== "chat" || payload.kind !== "message") eventStore.current.upsert(payload);
       if (payload.source === "system" && payload.kind === "metric") {
         const nextMetrics = parseSystemMetrics(payload.meta);
@@ -779,7 +826,8 @@ function App() {
     return () => observer.disconnect();
   }, [nowPlaying?.title, settings.nowPlayingEnabled, settings.nowPlayingPeekEnabled]);
 
-  const codexRows = primaryCodexTaskRows(tasks);
+  const visibleTasks = settings.codexEnabled ? tasks : tasks.filter((task) => task.source !== "codex");
+  const codexRows = settings.codexEnabled ? primaryCodexTaskRows(visibleTasks) : [];
   const codex = codexRows[0] ?? initialTasks[0];
   const antigravityTasks = tasks.filter((task) => task.source === "antigravity-app" || task.source === "antigravity-cli" || task.source === "antigravity-ide");
   const activeAntigravityTasks = antigravityTasks
@@ -799,11 +847,11 @@ function App() {
     });
   }
   const taskGroups = [
-    { name: "Codex", rows: codexRows.length > 0 ? codexRows : [codex] },
+    ...(settings.codexEnabled ? [{ name: "Codex", rows: codexRows.length > 0 ? codexRows : [codex] }] : []),
     ...(antigravityRows.length > 0 ? [{ name: "Antigravity", rows: antigravityRows }] : []),
   ];
-  const aiStatus = aggregateTaskStatus(tasks);
-  const aiHasRunning = tasks.some((task) => task.status === "running");
+  const aiStatus = aggregateTaskStatus(visibleTasks);
+  const aiHasRunning = visibleTasks.some((task) => task.status === "running");
   const isOpen = state === "expanded";
   const systemLoad = [systemMetrics.current.cpuPercent, systemMetrics.current.gpuPercent]
     .filter((value): value is number => value !== null)
@@ -815,7 +863,7 @@ function App() {
       : systemLoad > 0 ? "running" : "idle";
 
   const showPeek = (source: PulseSource, sourceName: string, message: string) => {
-    if (paused || quietMode || quietEnvironment) return;
+    if (paused || quietMode || quietEnvironment || (source === "codex" && !settingsRef.current.codexEnabled)) return;
     setPeekInfo({ source: sourceName, message, chatMessages: [] });
     setPulseSource(source);
     dispatch({ type: "set", state: "alert" });
@@ -1254,9 +1302,13 @@ function App() {
           {settingsOpen ? (
             <>
               <div className="settings-heading">
-                <h4>{settingsCopy.title}</h4>
-                <button aria-label={settingsCopy.close} onClick={(event) => { event.stopPropagation(); setSettingsOpen(false); }}>×</button>
+                <div className="settings-heading-copy">
+                  <h4>{settingsCopy.title}</h4>
+                  <p>{settingsCopy.subtitle}</p>
+                </div>
+                <button aria-label={settingsCopy.close} onClick={(event) => { event.stopPropagation(); setSettingsOpen(false); }} type="button">×</button>
               </div>
+              <div className="settings-section-title">{settingsCopy.overlaySection}</div>
               <label className="setting-field">
                 <span>{settingsCopy.position}</span>
                 <select value={settings.corner} onChange={(event) => setSettings((current) => ({ ...current, corner: event.target.value as UserSettings["corner"] }))}>
@@ -1278,6 +1330,7 @@ function App() {
                   {[2, 3, 4, 5, 6, 8, 10].map((seconds) => <option key={seconds} value={seconds}>{settingsCopy.seconds(seconds)}</option>)}
                 </select>
               </label>
+              <div className="settings-section-title">{settingsCopy.notificationsSection}</div>
               <label className="setting-field">
                 <span>{settingsCopy.monitoredApps}</span>
                 <input value={monitoredAppsText} onChange={(event) => {
@@ -1287,6 +1340,7 @@ function App() {
                   setSettings((current) => ({ ...current, monitoredApps }));
                 }} placeholder={settingsCopy.monitoredAppsPlaceholder} />
               </label>
+              <p className="settings-hint">{settingsCopy.monitoredAppsHint}</p>
               {isTauri() && (
                 <div className="setting-field" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span>{settingsCopy.notificationPermission}</span>
@@ -1314,67 +1368,46 @@ function App() {
                   )}
                 </div>
               )}
-              <label className="setting-toggle">
-                <span>{settingsCopy.antigravityHooks}</span>
-                <input type="checkbox" checked={antigravityHooksEnabled} disabled={!isTauri()} onChange={(event) => {
-                  const enabled = event.target.checked;
+              <div className="settings-section-title">{settingsCopy.integrationsSection}</div>
+              <SettingsSwitch label={settingsCopy.antigravityHooks} checked={antigravityHooksEnabled} disabled={!isTauri()} onChange={(enabled) => {
                   void invoke<boolean>("set_antigravity_hooks_enabled", { enabled })
                     .then(setAntigravityHooksEnabled)
                     .catch((error: unknown) => console.warn("Could not update Antigravity hooks", error));
                 }} />
-              </label>
-              <label className="setting-toggle">
-                <span>{settingsCopy.nowPlaying}</span>
-                <input type="checkbox" checked={settings.nowPlayingEnabled} onChange={(event) => {
-                  setSettings((current) => ({ ...current, nowPlayingEnabled: event.target.checked, nowPlayingPeekEnabled: event.target.checked ? current.nowPlayingPeekEnabled : false }));
-                }} />
-              </label>
+              <SettingsSwitch label={settingsCopy.codexIntegration} checked={settings.codexEnabled} onChange={(enabled) => {
+                setSettings((current) => ({ ...current, codexEnabled: enabled }));
+              }} />
+              <div className="settings-section-title">{settingsCopy.featuresSection}</div>
+              <SettingsSwitch label={settingsCopy.nowPlaying} checked={settings.nowPlayingEnabled} onChange={(enabled) => {
+                setSettings((current) => ({ ...current, nowPlayingEnabled: enabled, nowPlayingPeekEnabled: enabled ? current.nowPlayingPeekEnabled : false }));
+              }} />
               {settings.nowPlayingEnabled && (
-                <label className="setting-toggle">
-                  <span>{settingsCopy.nowPlayingBrowserMedia}</span>
-                  <input type="checkbox" checked={settings.nowPlayingBrowserMediaEnabled} onChange={(event) => {
-                    setSettings((current) => ({ ...current, nowPlayingBrowserMediaEnabled: event.target.checked }));
-                  }} />
-                </label>
+                <SettingsSwitch label={settingsCopy.nowPlayingBrowserMedia} checked={settings.nowPlayingBrowserMediaEnabled} onChange={(enabled) => {
+                  setSettings((current) => ({ ...current, nowPlayingBrowserMediaEnabled: enabled }));
+                }} />
               )}
               {settings.nowPlayingEnabled && (
-                <label className="setting-toggle">
-                  <span>{settingsCopy.nowPlayingPeek}</span>
-                  <input type="checkbox" checked={settings.nowPlayingPeekEnabled} onChange={(event) => {
-                    setSettings((current) => ({ ...current, nowPlayingPeekEnabled: event.target.checked }));
-                  }} />
-                </label>
+                <SettingsSwitch label={settingsCopy.nowPlayingPeek} checked={settings.nowPlayingPeekEnabled} onChange={(enabled) => {
+                  setSettings((current) => ({ ...current, nowPlayingPeekEnabled: enabled }));
+                }} />
               )}
-              <label className="setting-toggle">
-                <span>{settingsCopy.whatsappNotifications}</span>
-                <input type="checkbox" checked={settings.whatsappNotificationsEnabled} onChange={(event) => {
-                  setSettings((current) => ({ ...current, whatsappNotificationsEnabled: event.target.checked }));
-                }} />
-              </label>
-              <label className="setting-toggle">
-                <span>{settingsCopy.whatsappCard}</span>
-                <input type="checkbox" checked={settings.whatsappCardEnabled} onChange={(event) => {
-                  setSettings((current) => ({ ...current, whatsappCardEnabled: event.target.checked }));
-                }} />
-              </label>
-              <label className="setting-toggle">
-                <span>{settingsCopy.allowDuringFullscreen}</span>
-                <input type="checkbox" checked={settings.allowDuringFullscreen} onChange={(event) => {
-                  setSettings((current) => ({ ...current, allowDuringFullscreen: event.target.checked }));
-                }} />
-              </label>
-              <label className="setting-toggle">
-                <span>{settingsCopy.autoStart}</span>
-                <input type="checkbox" checked={settings.autoStart} disabled={!autoStartReady || !isTauri()} onChange={(event) => {
-                  const enabled = event.target.checked;
+              <SettingsSwitch label={settingsCopy.whatsappNotifications} checked={settings.whatsappNotificationsEnabled} onChange={(enabled) => {
+                setSettings((current) => ({ ...current, whatsappNotificationsEnabled: enabled }));
+              }} />
+              <SettingsSwitch label={settingsCopy.whatsappCard} checked={settings.whatsappCardEnabled} onChange={(enabled) => {
+                setSettings((current) => ({ ...current, whatsappCardEnabled: enabled }));
+              }} />
+              <SettingsSwitch label={settingsCopy.allowDuringFullscreen} checked={settings.allowDuringFullscreen} onChange={(enabled) => {
+                setSettings((current) => ({ ...current, allowDuringFullscreen: enabled }));
+              }} />
+              <div className="settings-section-title">{settingsCopy.startupSection}</div>
+              <SettingsSwitch label={settingsCopy.autoStart} checked={settings.autoStart} disabled={!autoStartReady || !isTauri()} onChange={(enabled) => {
                   setSettings((current) => ({ ...current, autoStart: enabled }));
                   if (isTauri()) void invoke("set_auto_start", { enabled }).catch((error: unknown) => {
                     console.warn("Could not update auto-start", error);
                     setSettings((current) => ({ ...current, autoStart: !enabled }));
                   });
                 }} />
-              </label>
-              <button className="settings-done" onClick={(event) => { event.stopPropagation(); setSettingsOpen(false); }}>{settingsCopy.done}</button>
             </>
           ) : (
             <>

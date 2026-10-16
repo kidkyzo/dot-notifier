@@ -2,7 +2,10 @@ use std::fs;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -110,6 +113,7 @@ pub fn start(
     app: AppHandle,
     session_dir: &Path,
     approvals: Arc<ApprovalRegistry>,
+    codex_enabled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
     listener
@@ -131,10 +135,18 @@ pub fn start(
                     let token = token.clone();
                     let filter = notification_filter.clone();
                     let approvals = approvals.clone();
+                    let codex_enabled = codex_enabled.clone();
                     let _ = thread::Builder::new()
                         .name("dot-notifier-bus-client".into())
                         .spawn(move || {
-                            handle_connection(&app, stream, &token, &filter, &approvals)
+                            handle_connection(
+                                &app,
+                                stream,
+                                &token,
+                                &filter,
+                                &approvals,
+                                &codex_enabled,
+                            )
                         });
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -168,12 +180,17 @@ fn random_token() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn is_integration_enabled(agent: Option<&str>, codex_enabled: bool) -> bool {
+    agent != Some("codex") || codex_enabled
+}
+
 fn handle_connection(
     app: &AppHandle,
     stream: TcpStream,
     token: &str,
     notification_filter: &Mutex<NotificationFilter>,
     approvals: &ApprovalRegistry,
+    codex_enabled: &AtomicBool,
 ) {
     if !is_authorized_upgrade(&stream, token) {
         use std::io::Write;
@@ -205,6 +222,12 @@ fn handle_connection(
             return;
         }
     };
+    if !is_integration_enabled(
+        event.agent.as_deref(),
+        codex_enabled.load(Ordering::Acquire),
+    ) {
+        return;
+    }
     event.actions = None;
     event.action_nonce = None;
     event.pid = event.pid.map(focus::focus_target_pid);
@@ -474,7 +497,15 @@ fn is_iso8601(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_uuid, parse_event};
+    use super::{is_integration_enabled, is_uuid, parse_event};
+
+    #[test]
+    fn codex_events_follow_the_integration_switch() {
+        assert!(is_integration_enabled(Some("codex"), true));
+        assert!(!is_integration_enabled(Some("codex"), false));
+        assert!(is_integration_enabled(Some("antigravity-app"), false));
+        assert!(is_integration_enabled(None, false));
+    }
 
     #[test]
     fn accepts_valid_payload_and_ignores_unknown_fields() {

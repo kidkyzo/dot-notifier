@@ -2,6 +2,7 @@ export type UserSettings = {
   peekDurationSeconds: number;
   monitoredApps: string[];
   autoStart: boolean;
+  codexEnabled: boolean;
   corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   monitorKey: string | null;
   nowPlayingEnabled: boolean;
@@ -16,6 +17,7 @@ export const defaultSettings: UserSettings = {
   peekDurationSeconds: 4,
   monitoredApps: ["WhatsApp"],
   autoStart: false,
+  codexEnabled: true,
   corner: "top-right",
   monitorKey: null,
   nowPlayingEnabled: false,
@@ -47,6 +49,7 @@ export const loadSettings = (storage: Pick<Storage, "getItem">): UserSettings =>
         : defaultSettings.peekDurationSeconds,
       monitoredApps: storedApps.length > 0 ? storedApps : defaultSettings.monitoredApps,
       autoStart: typeof record.autoStart === "boolean" ? record.autoStart : defaultSettings.autoStart,
+      codexEnabled: typeof record.codexEnabled === "boolean" ? record.codexEnabled : defaultSettings.codexEnabled,
       corner: record.corner === "top-left" || record.corner === "top-right"
         || record.corner === "bottom-left" || record.corner === "bottom-right"
         ? record.corner
